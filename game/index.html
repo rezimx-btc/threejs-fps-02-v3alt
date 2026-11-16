@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EMBERLINE — Foundry Protocol</title>
+    <style>
+      :root {
+        --ember: #ff7a1a;
+        --amber: #ffb454;
+        --cyan: #5fd6d2;
+        --red: #ff3b30;
+        --panel: rgba(8, 10, 12, 0.72);
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0d0f; }
+      body { font-family: "Segoe UI", system-ui, -apple-system, sans-serif; color: #e8e6e1; user-select: none; }
+      #game, #game canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+      #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+      #vignette { position: fixed; inset: 0; pointer-events: none; z-index: 3;
+        background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.5) 100%); }
+      /* crosshair: four ticks whose gap tracks weapon spread */
+      #crosshair { position: fixed; left: 50%; top: 50%; width: 0; height: 0; --gap: 5px; z-index: 6; pointer-events: none; }
+      #crosshair::before, #crosshair::after { content: ""; position: absolute; background: #fff; box-shadow: 0 0 2px #000; }
+      #crosshair::before { left: calc(var(--gap) * -1 - 6px); top: -1px; width: calc(var(--gap) * 2 + 12px); height: 2px; }
+      #crosshair::after { left: -1px; top: calc(var(--gap) * -1 - 6px); width: 2px; height: calc(var(--gap) * 2 + 12px); }
+      #crosshair .dot { position: absolute; left: -2px; top: -2px; width: 4px; height: 4px; border-radius: 50%; background: #fff; }
+      #hitmarker { position: fixed; left: 50%; top: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px; opacity: 0; z-index: 6; pointer-events: none; transition: opacity 0.15s; }
+      #hitmarker.on { opacity: 1; }
+      #hitmarker::before, #hitmarker::after { content: ""; position: absolute; left: 12px; top: 0; width: 2px; height: 26px; background: #fff; }
+      #hitmarker::before { transform: rotate(45deg); }
+      #hitmarker::after { transform: rotate(-45deg); }
+      #hitmarker.kill::before, #hitmarker.kill::after { background: var(--red); }
+      /* damage direction ring: the red segment rotates toward the shooter */
+      #dmg-dir { position: fixed; left: 50%; top: 50%; width: 150px; height: 150px; z-index: 6; pointer-events: none;
+        border-radius: 50%; border: 4px solid transparent; border-top-color: rgba(255, 60, 40, 0.9);
+        opacity: 0; transition: opacity 0.2s; }
+      #dmg-dir.on { opacity: 1; }
+      #compass { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); width: 520px; max-width: 70vw; height: 26px;
+        background: linear-gradient(90deg, transparent, rgba(0,0,0,0.45) 15%, rgba(0,0,0,0.45) 85%, transparent);
+        border-bottom: 1px solid rgba(255,255,255,0.18); z-index: 6; pointer-events: none; overflow: hidden; }
+      #compass::after { content: ""; position: absolute; left: 50%; top: 0; width: 2px; height: 10px; background: var(--ember); transform: translateX(-50%); }
+      #compass-strip { position: absolute; inset: 0; }
+      .compass-mark, .compass-tick { position: absolute; top: 6px; transform: translateX(-50%); font-size: 12px; font-weight: 700; letter-spacing: 1px; text-shadow: 0 1px 2px #000; white-space: nowrap; }
+      .compass-mark.site { color: var(--amber); }
+      .compass-mark.hostage { color: var(--cyan); }
+      .compass-mark.extract { color: #9dff9d; }
+      .compass-tick { color: #cfccc5; }
+      #top-left { position: fixed; top: 14px; left: 16px; z-index: 6; pointer-events: none; }
+      #timer { font-size: 30px; font-weight: 800; letter-spacing: 2px; text-shadow: 0 2px 4px #000; }
+      #timer.urgent { color: var(--red); }
+      #round-num { font-size: 12px; letter-spacing: 2px; color: #bdbab2; text-transform: uppercase; }
+      #score { font-size: 20px; font-weight: 800; margin-top: 2px; text-shadow: 0 2px 4px #000; }
+      #score-e { color: var(--ember); }
+      #score-s { color: var(--cyan); font-style: normal; }
+      #top-right { position: fixed; top: 14px; right: 16px; max-width: 340px; text-align: right; z-index: 6; pointer-events: none; }
+      #objective { font-size: 14px; font-weight: 600; line-height: 1.35; text-shadow: 0 1px 3px #000; }
+      #charge-bar { display: none; margin-top: 6px; }
+      #charge-label { font-size: 12px; letter-spacing: 1px; color: var(--amber); }
+      .charge-track { height: 8px; background: rgba(255,255,255,0.15); margin-top: 3px; }
+      #charge-fill { height: 100%; background: var(--red); width: 0; }
+      #hostages { margin-top: 4px; font-size: 12px; letter-spacing: 1px; color: var(--amber); }
+      #bottom-left { position: fixed; left: 16px; bottom: 16px; z-index: 6; pointer-events: none; }
+      .health-line { font-size: 34px; font-weight: 800; line-height: 1; text-shadow: 0 2px 4px #000; }
+      .health-line small { font-size: 13px; color: #bdbab2; font-weight: 600; }
+      #armor-num { font-size: 15px; color: var(--cyan); font-weight: 700; margin-left: 6px; }
+      #health-wrap.low #health-num { color: var(--red); }
+      #health-track { width: 200px; height: 6px; background: rgba(255,255,255,0.15); margin-top: 6px; }
+      #health-fill { height: 100%; background: var(--ember); width: 100%; }
+      #bottom-right { position: fixed; right: 16px; bottom: 16px; text-align: right; z-index: 6; pointer-events: none; }
+      #ammo { font-size: 30px; font-weight: 800; line-height: 1; text-shadow: 0 2px 4px #000; }
+      #ammo small { font-size: 14px; color: #bdbab2; font-weight: 600; }
+      #ammo.reloading { opacity: 0.55; }
+      #money { font-size: 15px; font-weight: 700; color: var(--amber); margin-top: 4px; text-shadow: 0 1px 3px #000; }
+      #weapon-name { font-size: 12px; letter-spacing: 2px; color: #bdbab2; text-transform: uppercase; margin-top: 2px; }
+      #grenade-name { font-size: 12px; letter-spacing: 1px; color: #bdbab2; margin-top: 2px; }
+      #killfeed { position: fixed; right: 16px; top: 92px; z-index: 6; pointer-events: none; text-align: right; font-size: 13px; font-weight: 600; }
+      .feed-item { margin-top: 4px; text-shadow: 0 1px 3px #000; opacity: 0.95; transition: opacity 0.9s; }
+      .feed-item.good { color: #9dff9d; }
+      .feed-item.bad { color: #ffb0a8; }
+      .feed-item.fade { opacity: 0; }
+      #banner { position: fixed; left: 50%; top: 26%; transform: translate(-50%, -50%) scale(0.96); z-index: 7; pointer-events: none;
+        text-align: center; opacity: 0; transition: opacity 0.25s, transform 0.25s; }
+      #banner.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+      #banner-title { font-size: 44px; font-weight: 900; letter-spacing: 6px; text-shadow: 0 3px 10px #000; }
+      #banner-sub { font-size: 16px; color: #d8d5cf; margin-top: 6px; text-shadow: 0 2px 4px #000; }
+      #interact { position: fixed; left: 50%; top: 58%; transform: translateX(-50%); z-index: 6; pointer-events: none;
+        font-size: 15px; font-weight: 700; background: var(--panel); padding: 8px 14px; border: 1px solid rgba(255,255,255,0.25); display: none; }
+      #flash { position: fixed; inset: 0; z-index: 8; pointer-events: none; background: #fff; opacity: 0; }
+      #lock-hint { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 6; pointer-events: none;
+        display: none; font-size: 13px; font-weight: 600; color: #ffd9a8; background: var(--panel);
+        border: 1px solid rgba(255,180,84,0.5); padding: 7px 12px; }
+      /* buy menu — above the pause overlay (z-index 10) so the shop stays
+         clickable even if the overlay is up behind it */
+      #buy { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 11; display: none;
+        width: 560px; max-width: 92vw; max-height: 86vh; overflow: auto; background: var(--panel);
+        border: 1px solid rgba(255,255,255,0.2); padding: 18px 20px; pointer-events: auto; backdrop-filter: blur(4px); }
+      #buy h2 { font-size: 20px; letter-spacing: 3px; }
+      #buy h2 span { float: right; color: var(--amber); font-size: 16px; letter-spacing: 1px; }
+      #buy h3 { font-size: 12px; letter-spacing: 2px; color: #bdbab2; margin: 14px 0 6px; text-transform: uppercase; }
+      .buy-row { display: flex; justify-content: space-between; align-items: center; width: 100%;
+        padding: 9px 10px; border: 1px solid rgba(255,255,255,0.12); margin-top: 6px; background: rgba(255,255,255,0.04);
+        color: inherit; font: inherit; text-align: left; cursor: pointer; }
+      .buy-row:hover:not(:disabled) { border-color: rgba(255,255,255,0.4); }
+      .buy-row:disabled { opacity: 0.45; cursor: default; }
+      .buy-name { display: block; font-weight: 700; font-size: 14px; }
+      .buy-desc { display: block; font-size: 12px; color: #bdbab2; margin-top: 2px; }
+      .buy-price { font-weight: 800; font-size: 13px; color: var(--amber); letter-spacing: 1px; white-space: nowrap; margin-left: 12px; }
+      #buy-close { margin-top: 14px; width: 100%; background: #2a2e33; color: #fff; border: 1px solid rgba(255,255,255,0.25); padding: 10px; font-weight: 700; cursor: pointer; letter-spacing: 2px; }
+      /* full-screen overlay (menu / pause / dead / end). hud.js toggles the
+         hidden *property*, so the [hidden] rule must beat #overlay's flex. */
+      #overlay { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center;
+        background: linear-gradient(180deg, rgba(5,6,8,0.82), rgba(5,6,8,0.55) 55%, rgba(5,6,8,0.82)); text-align: center; padding: 20px; }
+      #overlay[hidden] { display: none; }
+      #overlay-title { font-size: 56px; font-weight: 900; letter-spacing: 10px; color: var(--ember); text-shadow: 0 4px 18px rgba(0,0,0,0.8); }
+      #overlay-copy { font-size: 16px; color: #d8d5cf; margin-top: 10px; max-width: 560px; line-height: 1.5; }
+      #play { margin-top: 24px; background: var(--ember); color: #fff; border: 0; padding: 14px 42px; font-size: 17px; font-weight: 800;
+        letter-spacing: 3px; cursor: pointer; pointer-events: auto; }
+      #play:hover { filter: brightness(1.12); }
+      /* Deterministic screenshots: in ?shot= mode every HUD state snaps to
+         its final value at once. A CSS transition (banner fade-in, hitmarker
+         fade) finishes on the wall clock, so the frame a screenshot catches
+         depends on how fast the page loaded — the same seed would render a
+         different banner opacity on every run. With transitions off, the
+         captured frame is a pure function of the seed. */
+      .shot-mode * { transition: none !important; }
+      .shot-mode #hud, .shot-mode #vignette { display: block; }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./vendor/three.module.min.js",
+          "three/addons/": "./vendor/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="game"></div>
+    <div id="vignette"></div>
+    <div id="hud">
+      <div id="crosshair"><span class="dot"></span></div>
+      <div id="hitmarker"></div>
+      <div id="dmg-dir"></div>
+      <div id="compass"><div id="compass-strip"></div></div>
+      <div id="top-left">
+        <div id="timer">1:40</div>
+        <div id="round-num">R1</div>
+        <div id="score"><b id="score-e">0</b> — <i id="score-s">0</i></div>
+      </div>
+      <div id="top-right">
+        <div id="objective">Win the round: plant the charge, or free both hostages.</div>
+        <div id="charge-bar"><span id="charge-label"></span><div class="charge-track"><div id="charge-fill"></div></div></div>
+        <div id="hostages"></div>
+      </div>
+      <div id="bottom-left">
+        <div id="health-wrap">
+          <div class="health-line"><span id="health-num">100</span> <small>HP</small><span id="armor-num"></span></div>
+          <div id="health-track"><div id="health-fill"></div></div>
+        </div>
+      </div>
+      <div id="bottom-right">
+        <div id="ammo"><span id="ammo-mag">12</span> <small id="ammo-reserve">/ 48</small></div>
+        <div id="money">$800</div>
+        <div id="weapon-name">P9 SIDEARM</div>
+        <div id="grenade-name">Frag —</div>
+      </div>
+      <div id="killfeed"></div>
+      <div id="banner"><div id="banner-title"></div><div id="banner-sub"></div></div>
+      <div id="interact"></div>
+      <div id="lock-hint">Pointer lock unavailable — drag to look, click to fire.</div>
+    </div>
+    <div id="flash"></div>
+    <div id="buy">
+      <h2>BUY MENU <span id="buy-money">$800</span></h2>
+      <h3>Weapons</h3>
+      <button class="buy-row" id="buy-P9"><span><span class="buy-name">P9 Sidearm</span><span class="buy-desc">Reliable sidearm. 12-round mag.</span></span><span class="buy-price">OWNED</span></button>
+      <button class="buy-row" id="buy-VK7"><span><span class="buy-name">VK7 Rifle</span><span class="buy-desc">Automatic rifle. Accurate at range.</span></span><span class="buy-price">$900</span></button>
+      <button class="buy-row" id="buy-MAW9"><span><span class="buy-name">MAW9 SMG</span><span class="buy-desc">Rapid fire, close quarters.</span></span><span class="buy-price">$1100</span></button>
+      <button class="buy-row" id="buy-F12"><span><span class="buy-name">F12 Scattergun</span><span class="buy-desc">Eight pellets per shell. Devastating up close.</span></span><span class="buy-price">$1300</span></button>
+      <h3>Utility</h3>
+      <button class="buy-row" id="buy-g-frag"><span><span class="buy-name">Frag Grenade</span><span class="buy-desc">Blast damage in a 7 m radius.</span></span><span class="buy-price">$300</span></button>
+      <button class="buy-row" id="buy-g-smoke"><span><span class="buy-name">Smoke Grenade</span><span class="buy-desc">Blocks sight and bullets for 12 s.</span></span><span class="buy-price">$300</span></button>
+      <button class="buy-row" id="buy-g-flash"><span><span class="buy-name">Flash Grenade</span><span class="buy-desc">Blinds anyone facing the burst.</span></span><span class="buy-price">$200</span></button>
+      <button class="buy-row" id="buy-armor"><span><span class="buy-name">Kevlar Armor</span><span class="buy-desc">Absorbs half of incoming damage.</span></span><span class="buy-price">$650</span></button>
+      <button id="buy-close">CLOSE [B]</button>
+    </div>
+    <div id="overlay">
+      <div id="overlay-title">EMBERLINE</div>
+      <div id="overlay-copy">Foundry Protocol — 4v4. Plant the charge at A or B, or free both hostages and bring them to extraction. First to 5 rounds.</div>
+      <button id="play">Click to play</button>
+    </div>
+    <script type="module" src="./src/main.js"></script>
+    <script>
+      // The buy panel's Close button reuses the exact KeyB toggle path in
+      // main.js (close menu + re-request pointer lock) through a synthetic
+      // key event, so keyboard and mouse stay on one code path.
+      document.getElementById('buy-close').addEventListener('click', () => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyB', bubbles: true }));
+      });
+    </script>
+  </body>
+</html>
